@@ -1,0 +1,35 @@
+# 依赖与构建产物（镜像内重新安装/构建）
+node_modules
+.next
+out
+build
+coverage
+
+# 版本控制与工具目录
+.git
+.github
+.claude
+.spec-workflow
+.playwright-mcp
+
+# 环境变量：绝不进镜像（运行时通过 env_file / -e 注入）
+.env
+.env.*
+
+# 本地上传内容（运行时用数据卷持久化）
+uploads
+
+# 文档与截图（构建不需要）
+*.md
+*.jpeg
+*.jpg
+*.png
+*.gif
+
+# 杂项
+Dockerfile
+docker-compose*.yml
+.dockerignore
+npm-debug.log*
+*.tsbuildinfo
+.DS_Store

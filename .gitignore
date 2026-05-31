@@ -1,0 +1,63 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+.env*
+!.env.example
+
+# uploaded submission assets (protected, served via authenticated route)
+/uploads/
+
+# playwright / verification artifacts
+/.playwright-mcp/
+/*.jpeg
+/*.png
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# README宣传图（不提交，放在.github/assets本地使用）
+.github/assets/*.jpeg
+.github/assets/*.jpg
+.github/assets/*.png
+.github/assets/*.gif
+
+# 本地工具 / 工作流目录（勿入库）
+.claude/
+.spec-workflow/
+
+# docker 本地挂载卷数据（如有）
+/pgdata/

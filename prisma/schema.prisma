@@ -1,0 +1,597 @@
+// Real 2026 鸿蒙创新赛 · 公开评选平台 — 数据模型
+// Prisma 6.19.x（稳定线）· PostgreSQL（Neon Serverless）
+//
+// 设计要点：
+//   - 审计留痕（ReviewSession / MaterialView）是一等公民——正面回应"流量为 0 = 没人审阅"。
+//   - AI 不直接打分，而是"读材料 → 提问"（AiReviewRun / AiReviewQuestion），评委须查看材料作答（JudgeQuestionAnswer）。
+//   - 评委评分（JudgeScore）按维度，文字理由必填；兜底备注（JudgeReviewNote）记录其他情况。
+//   - 加分硬通货（上架/邀测/可运行仓库）在 Submission 上存派生标记，便于展示墙过滤与加权排序。
+//   - 评分用 Decimal 保精度；明细表对"维度/问题"用复合唯一键防重复并支撑 upsert。
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL") // 运行时（pooled / pgbouncer）
+  directUrl = env("DIRECT_URL") // 迁移用直连（unpooled）
+}
+
+// ========================= 枚举 =========================
+
+enum UserRole {
+  PARTICIPANT // 参赛者
+  JUDGE // 评委
+  ADMIN // 管理员
+}
+
+enum TeamMemberRole {
+  LEADER // 队长
+  MEMBER // 队员
+}
+
+enum StageType {
+  REGISTRATION // 报名
+  PRELIMINARY // 初赛
+  SEMIFINAL // 复赛
+  FINAL // 决赛
+}
+
+enum StageStatus {
+  UPCOMING // 未开始
+  OPEN // 进行中（可提交）
+  REVIEWING // 评审中
+  CLOSED // 已结束
+}
+
+enum SubmissionStatus {
+  DRAFT // 草稿（可继续编辑）
+  SUBMITTED // 已提交，进入评审池
+  UNDER_REVIEW // 评审中
+  SCORED // 已出分
+  WITHDRAWN // 撤回
+}
+
+enum AssetType {
+  SLIDE // PPT / PDF
+  DESIGN // 设计稿
+  DOCUMENT // 其它文档
+  IMAGE // 图片
+  VIDEO_UPLOAD // 上传的视频（区别于外链）
+  OTHER
+}
+
+enum ExternalLinkType {
+  DEMO_VIDEO // 演示视频外链（B站 / YouTube）
+  REPO // 代码仓库
+  APP_MARKET // 华为应用市场上架链接（加分硬通货）
+  BETA_TEST // 邀测链接（加分硬通货）
+  HOMEPAGE // 项目主页
+  OTHER
+}
+
+enum MaterialKind {
+  DETAIL_PAGE // 进入了作品详情页
+  DEMO_VIDEO // 打开了演示视频
+  REPO // 打开了代码仓库
+  APP_MARKET // 打开了应用市场链接
+  BETA_TEST // 打开了邀测链接
+  HOMEPAGE // 打开了项目主页
+  ATTACHMENT // 打开了某个附件
+  FORM_SECTION // 展开了项目说明的某段
+}
+
+// ===================== 认证与用户（Auth.js 兼容 + 扩展） =====================
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  passwordHash  String? // 邮箱密码登录；OAuth 用户可空
+  role          UserRole  @default(PARTICIPANT)
+  image         String?
+  emailVerified DateTime? // Auth.js 标准字段
+  bio           String?   @db.Text // 评委/参赛者简介
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts            Account[]
+  sessions            Session[]
+  ledTeams            Team[]                @relation("TeamLeader")
+  teamMemberships     TeamMember[]
+  authoredSubmissions Submission[]          @relation("SubmissionAuthor")
+  judgeAssignments    JudgeAssignment[]
+  judgeScores         JudgeScore[]
+  judgeNotes          JudgeReviewNote[]
+  questionAnswers     JudgeQuestionAnswer[]
+  reviewSessions      ReviewSession[]
+  auditLogs           AuditLog[]
+  feedbackThreads     FeedbackThread[]      @relation("ThreadJudge")
+  feedbackMessages    FeedbackMessage[]
+
+  @@index([role])
+}
+
+// Auth.js 适配器标准表
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ========================= 团队 / 成员 =========================
+
+model Team {
+  id          String   @id @default(cuid())
+  name        String
+  description String?  @db.Text
+  leaderId    String
+  maxMembers  Int      @default(5) // 限定人数
+  createdAt   DateTime @default(now())
+
+  leader      User         @relation("TeamLeader", fields: [leaderId], references: [id])
+  members     TeamMember[]
+  submissions Submission[]
+
+  @@index([leaderId])
+}
+
+model TeamMember {
+  id       String         @id @default(cuid())
+  teamId   String
+  userId   String
+  role     TeamMemberRole @default(MEMBER)
+  joinedAt DateTime       @default(now())
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, userId]) // 同一用户在一队内唯一
+  @@index([userId])
+}
+
+// =================== 赛事 / 赛道 / 阶段 / 评分维度 ===================
+
+model Competition {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  title       String
+  subtitle    String?
+  description String   @db.Text // 赛事规则正文（Markdown）
+  manifesto   String?  @db.Text // 宣言——产品灵魂展示
+  startAt     DateTime
+  endAt       DateTime
+  isPublished Boolean  @default(false)
+  // 结果可见性：评审期内分数/名次/评委明细对公众隐藏，公布后才揭晓——防止过早泄分、评委互看
+  resultsPublished   Boolean   @default(false)
+  resultsPublishedAt DateTime?
+  createdAt   DateTime @default(now())
+
+  tracks     Track[]
+  stages     Stage[]
+  fields     SubmissionField[]
+  bonusRules BonusRule[]
+
+  @@index([slug])
+}
+
+model Track {
+  id            String  @id @default(cuid())
+  competitionId String
+  name          String
+  description   String? @db.Text
+  sortOrder     Int     @default(0)
+
+  competition Competition  @relation(fields: [competitionId], references: [id], onDelete: Cascade)
+  submissions Submission[]
+  criteria    Criterion[]
+
+  @@index([competitionId])
+}
+
+model Stage {
+  id            String      @id @default(cuid())
+  competitionId String
+  type          StageType
+  name          String
+  status        StageStatus @default(UPCOMING)
+  startAt       DateTime
+  endAt         DateTime
+  sortOrder     Int         @default(0)
+
+  competition Competition  @relation(fields: [competitionId], references: [id], onDelete: Cascade)
+  submissions Submission[]
+
+  @@index([competitionId, status])
+}
+
+model Criterion {
+  id             String  @id @default(cuid())
+  trackId        String
+  key            String // 机读键：runnability / innovation / completeness ...
+  name           String
+  description    String? @db.Text // 给评委与 AI 的评分指引
+  weight         Decimal @db.Decimal(5, 2) // 权重
+  maxScore       Int     @default(10) // 满分
+  sortOrder      Int     @default(0)
+  // 落地倾斜：标记此维度是否属于"可运行 / 真落地"硬通货
+  favorsRunnable Boolean @default(false)
+
+  track       Track        @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  judgeScores JudgeScore[]
+
+  @@unique([trackId, key])
+  @@index([trackId])
+}
+
+// ========================= 作品提交 =========================
+
+model Submission {
+  id    String @id @default(cuid())
+  title String
+  // 动态字段值 { fieldKey: value }；字段定义见 Competition.fields（SubmissionField），按赛事可配置
+  content Json @default("{}")
+
+  status      SubmissionStatus @default(DRAFT)
+  authorId    String // 提交人（个人赛=本人；团队赛=队长）
+  teamId      String? // 团队赛才有
+  trackId     String
+  stageId     String // 当前阶段（晋级时更新）
+  submittedAt DateTime?
+  scoredAt    DateTime? // 评审定稿时间（所有评委对该作品提交评审后由系统判定）
+  // 结果（赛事「公布结果」时快照落库——名次定格、可人工指定获奖，不再随实时计算漂移）
+  finalRank   Int? // 公布时的名次
+  awardLabel  String? // 获奖标记（如「一等奖」「最佳人气」），可人工指定
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  author          User                  @relation("SubmissionAuthor", fields: [authorId], references: [id])
+  team            Team?                 @relation(fields: [teamId], references: [id])
+  track           Track                 @relation(fields: [trackId], references: [id])
+  stage           Stage                 @relation(fields: [stageId], references: [id])
+  assets          SubmissionAsset[]
+  links           ExternalLink[]
+  bonuses         SubmissionBonus[]
+  assignments     JudgeAssignment[]
+  judgeScores     JudgeScore[]
+  judgeNotes      JudgeReviewNote[]
+  aiRuns          AiReviewRun[]
+  aiQuestions     AiReviewQuestion[]
+  questionAnswers JudgeQuestionAnswer[]
+  reviewSessions  ReviewSession[]
+  materialViews   MaterialView[]
+  feedbackThreads FeedbackThread[]
+
+  @@index([trackId, status])
+  @@index([stageId, status])
+  @@index([authorId])
+  @@index([teamId])
+}
+
+model SubmissionAsset {
+  id           String    @id @default(cuid())
+  submissionId String
+  type         AssetType
+  fileName     String
+  storageKey   String // storage 抽象的 key（本地相对路径 / 将来 S3 key）
+  mimeType     String
+  sizeBytes    Int
+  createdAt    DateTime  @default(now())
+
+  submission Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@index([submissionId])
+}
+
+model ExternalLink {
+  id           String           @id @default(cuid())
+  submissionId String
+  type         ExternalLinkType
+  url          String           @db.Text
+  label        String?
+  createdAt    DateTime         @default(now())
+
+  submission Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@index([submissionId, type])
+}
+
+// =============== 动态提交字段 / 加分硬通货（赛事级可配置） ===============
+
+enum FieldType {
+  TEXT // 单行文本
+  TEXTAREA // 多行文本
+}
+
+// 赛事定义参赛者需填写的字段（存入 Submission.content 的 key→value）
+model SubmissionField {
+  id            String    @id @default(cuid())
+  competitionId String
+  key           String // 机读键（Submission.content 的 key）
+  label         String // 显示标签
+  type          FieldType @default(TEXTAREA)
+  placeholder   String?
+  required      Boolean   @default(true)
+  rows          Int       @default(3) // TEXTAREA 行数
+  sortOrder     Int       @default(0)
+
+  competition Competition @relation(fields: [competitionId], references: [id], onDelete: Cascade)
+
+  @@unique([competitionId, key])
+  @@index([competitionId])
+}
+
+// 加分硬通货项（赛事级定义：标签 + 分值 + 是否需证据链接）
+model BonusRule {
+  id            String  @id @default(cuid())
+  competitionId String
+  key           String
+  label         String
+  description   String? @db.Text
+  points        Int     @default(0)
+  requiresUrl   Boolean @default(true) // 声明此加分时是否要求填证据链接
+  sortOrder     Int     @default(0)
+
+  competition Competition       @relation(fields: [competitionId], references: [id], onDelete: Cascade)
+  claims      SubmissionBonus[]
+
+  @@unique([competitionId, key])
+  @@index([competitionId])
+}
+
+// 作品对加分项的声明（含证据链接）——加权排序时按 BonusRule.points 计分
+model SubmissionBonus {
+  id           String   @id @default(cuid())
+  submissionId String
+  bonusRuleId  String
+  evidenceUrl  String?  @db.Text
+  createdAt    DateTime @default(now())
+
+  submission Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  bonusRule  BonusRule  @relation(fields: [bonusRuleId], references: [id], onDelete: Cascade)
+
+  @@unique([submissionId, bonusRuleId])
+  @@index([submissionId])
+}
+
+// ===================== 评委分配（平等池） =====================
+
+model JudgeAssignment {
+  id           String    @id @default(cuid())
+  judgeId      String
+  submissionId String
+  assignedAt   DateTime  @default(now())
+  completedAt  DateTime? // 评委「提交评审」定稿时间（null=进行中）
+
+  judge      User       @relation(fields: [judgeId], references: [id], onDelete: Cascade)
+  submission Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@unique([judgeId, submissionId])
+  @@index([judgeId])
+  @@index([submissionId])
+}
+
+// ===================== 评委评审产出 =====================
+
+// 评委按维度打分（文字理由必填）
+model JudgeScore {
+  id           String   @id @default(cuid())
+  judgeId      String
+  submissionId String
+  criterionId  String
+  score        Decimal  @db.Decimal(5, 2)
+  rationale    String   @db.Text // 文字理由（强约束：业务层必填）
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  judge      User       @relation(fields: [judgeId], references: [id], onDelete: Cascade)
+  submission Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  criterion  Criterion  @relation(fields: [criterionId], references: [id], onDelete: Cascade)
+
+  @@unique([judgeId, submissionId, criterionId]) // 一评委一作品一维度只一条
+  @@index([submissionId])
+}
+
+// 评委兜底备注（记录维度之外的其他情况：疑似套壳、材料缺失、额外亮点等）
+model JudgeReviewNote {
+  id           String   @id @default(cuid())
+  judgeId      String
+  submissionId String
+  note         String   @db.Text
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  judge      User       @relation(fields: [judgeId], references: [id], onDelete: Cascade)
+  submission Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@unique([judgeId, submissionId])
+  @@index([submissionId])
+}
+
+// ===================== AI 辅助审查（提问式，不打分） =====================
+
+// 一次 AI 审查运行的元数据（全留痕：模型 / 端点 / prompt / 原始响应）
+model AiReviewRun {
+  id                String   @id @default(cuid())
+  submissionId      String
+  model             String // 如 deepseek-chat / qwen-plus / glm-4
+  baseUrl           String? // 兼容端点
+  promptUsed        String   @db.Text
+  rawResponse       String   @db.Text // 模型原始返回（审计用）
+  overallAssessment String?  @db.Text // 总体评估
+  flags             String[] @default([]) // 风险标记（PG 原生数组）：concept_only / h5_shell / no_runnable_evidence ...
+  createdAt         DateTime @default(now())
+
+  submission Submission         @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  questions  AiReviewQuestion[]
+
+  @@index([submissionId])
+}
+
+// AI 生成的核查问题（需查看实际材料才能回答）
+model AiReviewQuestion {
+  id               String   @id @default(cuid())
+  runId            String
+  submissionId     String // 冗余，便于按作品直接查
+  order            Int      @default(0)
+  question         String   @db.Text
+  intent           String?  @db.Text // 此问想验证什么
+  requiresMaterial String? // 需查看哪类材料才能回答（MaterialKind 值或描述）
+  createdAt        DateTime @default(now())
+
+  run        AiReviewRun           @relation(fields: [runId], references: [id], onDelete: Cascade)
+  submission Submission            @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  answers    JudgeQuestionAnswer[]
+
+  @@index([runId])
+  @@index([submissionId])
+}
+
+// 评委对 AI 核查问题的回答（看过材料后作答；可标记"无法从材料中确认"）
+model JudgeQuestionAnswer {
+  id           String   @id @default(cuid())
+  questionId   String
+  judgeId      String
+  submissionId String // 冗余，便于聚合
+  answer       String   @db.Text
+  cantConfirm  Boolean  @default(false) // "材料中无法确认"——有价值的负面信号
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  question   AiReviewQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  judge      User             @relation(fields: [judgeId], references: [id], onDelete: Cascade)
+  submission Submission       @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@unique([questionId, judgeId])
+  @@index([submissionId])
+  @@index([judgeId])
+}
+
+// ===================== 审计 / 审阅留痕（头号特色） =====================
+
+// 评委一次"审阅会话"
+model ReviewSession {
+  id            String    @id @default(cuid())
+  judgeId       String
+  submissionId  String
+  startedAt     DateTime  @default(now())
+  lastHeartbeat DateTime  @default(now()) // 心跳更新
+  endedAt       DateTime? // 离开 / 超时关闭
+  durationSec   Int       @default(0) // 累计有效查看时长（秒）
+  userAgent     String?   @db.Text
+
+  judge         User           @relation(fields: [judgeId], references: [id], onDelete: Cascade)
+  submission    Submission     @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  materialViews MaterialView[]
+
+  @@index([submissionId])
+  @@index([judgeId, submissionId])
+}
+
+// 会话内"打开了哪些材料"的明细
+model MaterialView {
+  id           String       @id @default(cuid())
+  sessionId    String
+  submissionId String // 冗余，便于参赛者侧直接查
+  kind         MaterialKind
+  refId        String? // 指向具体 asset / link 的 id（弱引用，可空）
+  url          String?      @db.Text // 点击的外链 / 打开的资源
+  openedAt     DateTime     @default(now())
+
+  session    ReviewSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  submission Submission    @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([submissionId, kind])
+}
+
+// ===================== 数据库审计日志（管理操作留痕） =====================
+
+// 记录敏感管理操作：谁、何时、对什么、做了什么。actor 用 SetNull——
+// 用户被删后日志仍保留（actorEmail 冗余存档，便于事后追溯）。
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  actorEmail String? // 冗余：即使账号删除也可追溯操作者
+  action     String // 机读动作：user.role_change / competition.delete / bonus_rule.create ...
+  targetType String? // 对象类型：User / Competition / SubmissionField ...
+  targetId   String?
+  detail     Json? // 结构化详情（如 { from, to }）
+  ip         String?
+  createdAt  DateTime @default(now())
+
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([actorId])
+  @@index([action])
+}
+
+// ===================== 评审反馈工单（选手 ↔ 评委） =====================
+
+// 一条作品×评委的反馈会话：选手对某位评委的评审发起申诉/疑问，评委可回复（类工单）。
+// 评委保持匿名——前端按 judgeId 顺序展示「评委 A/B」，不暴露真实身份。
+model FeedbackThread {
+  id           String   @id @default(cuid())
+  submissionId String
+  judgeId      String // 针对哪位评委的评审
+  subject      String // 工单主题（选手发起时填）
+  resolved     Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  submission Submission        @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  judge      User              @relation("ThreadJudge", fields: [judgeId], references: [id], onDelete: Cascade)
+  messages   FeedbackMessage[]
+
+  @@unique([submissionId, judgeId]) // 一作品对一评委一条工单
+  @@index([submissionId])
+  @@index([judgeId])
+}
+
+model FeedbackMessage {
+  id        String   @id @default(cuid())
+  threadId  String
+  authorId  String // 发言人（选手或该评委）
+  body      String   @db.Text
+  createdAt DateTime @default(now())
+
+  thread FeedbackThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  author User           @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([threadId])
+}

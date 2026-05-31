@@ -1,0 +1,54 @@
+# Realship 评选平台 · Docker Compose
+# 完整部署步骤见 DEPLOY.md。
+# 默认连接「外部数据库」（如 Neon），凭据通过 .env 注入。
+# 如需全自托管，用 --profile local-db 启用内置 PostgreSQL。
+
+services:
+  # 应用（生产运行）
+  app:
+    build:
+      context: .
+      target: runner
+    image: realship-platform:latest
+    env_file: .env
+    ports:
+      - "3000:3000"
+    volumes:
+      # STORAGE_DRIVER=local 时持久化上传文件；改用 S3 可删除此卷
+      - uploads:/app/uploads
+    restart: unless-stopped
+
+  # 一次性任务：同步数据库 schema（prisma db push）；seed 见 DEPLOY.md
+  # 用法：docker compose --profile setup run --rm migrate
+  migrate:
+    build:
+      context: .
+      target: migrator
+    image: realship-platform-migrator:latest
+    env_file: .env
+    profiles: ["setup"]
+
+  # 可选：自托管 PostgreSQL（默认不启动；用 --profile local-db 启用）
+  # 启用后将 .env 的 DATABASE_URL / DIRECT_URL 指向：
+  #   postgresql://real:real@db:5432/real
+  db:
+    image: postgres:16-bookworm
+    profiles: ["local-db"]
+    environment:
+      POSTGRES_USER: real
+      POSTGRES_PASSWORD: real
+      POSTGRES_DB: real
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U real"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  uploads:
+  pgdata:
