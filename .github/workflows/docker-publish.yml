@@ -1,0 +1,134 @@
+# ============================================================
+# Realship · Docker 镜像构建与发布
+# 触发条件：推送 main 分支、语义化版本 tag（v*.*.*）或手动触发
+# 产物：ghcr.io/<owner>/realship:latest / :v1.0.0 / :sha-xxxxxxx
+# ============================================================
+
+name: Docker 构建与发布
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-push:
+    name: 构建并推送 Docker 镜像
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+
+    steps:
+      # ── 1) 检出代码 ──
+      - name: 检出仓库代码
+        uses: actions/checkout@v4
+
+      # ── 2) 设置 Docker Buildx（支持多平台 + 缓存） ──
+      - name: 设置 Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # ── 3) 登录 GitHub Container Registry ──
+      - name: 登录 GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── 4) 提取镜像标签与标签元数据 ──
+      - name: 提取 Docker 元数据（标签与标签）
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            # main 分支 → latest
+            type=raw,value=latest,enable={{is_default_branch}}
+            # 语义化版本 tag → v1.0.0, 1.0.0, 1.0
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            # 每次提交 → sha-xxxxxxx
+            type=sha,prefix=sha-
+
+      # ── 5) 构建并推送（runner 阶段） ──
+      - name: 构建并推送 Docker 镜像
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: runner
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+
+      # ── 6) 生成构建证明（供应链安全） ──
+      - name: 生成构建证明
+        if: github.event_name != 'pull_request'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+  # ── 可选：同时构建 migrator 镜像 ──
+  build-migrator:
+    name: 构建 Migrator 镜像
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: 检出仓库代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 登录 GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 提取 Migrator 元数据
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          flavor: |
+            suffix=-migrator
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=sha,prefix=sha-
+
+      - name: 构建并推送 Migrator 镜像
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: migrator
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
