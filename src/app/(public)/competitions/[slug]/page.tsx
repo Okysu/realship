@@ -131,7 +131,7 @@ export default async function CompetitionDetailPage({
                             {c.name}
                             {c.favorsRunnable && (
                               <Badge tone="primary" className="ml-2">
-                                重落地
+                                硬通货
                               </Badge>
                             )}
                           </td>

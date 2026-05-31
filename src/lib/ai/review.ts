@@ -101,7 +101,7 @@ export async function runAiReview(submissionId: string) {
       .map(
         (c) =>
           `- ${c.name}（权重 ${String(c.weight)} / 满分 ${c.maxScore}${
-            c.favorsRunnable ? "，重落地" : ""
+            c.favorsRunnable ? "，硬通货" : ""
           }）${c.description ? "：" + c.description : ""}`,
       )
       .join("\n"),

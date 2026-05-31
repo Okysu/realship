@@ -36,7 +36,7 @@ export function ScoreForm({
           {criterion.name}
           {criterion.favorsRunnable && (
             <Badge tone="primary" className="ml-2">
-              重落地
+              硬通货
             </Badge>
           )}
         </div>

@@ -71,7 +71,7 @@ export function JudgeReviewTabs({
                       {s.name}
                       {s.favorsRunnable && (
                         <Badge tone="primary" className="ml-2">
-                          重落地
+                          硬通货
                         </Badge>
                       )}
                     </span>
