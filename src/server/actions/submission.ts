@@ -22,12 +22,12 @@ export type ActionState =
     }
   | undefined;
 
-// 校验作品归属（作者本人），否则抛错。
+// 校验作品归属（作者本人），否则抛错。已软删除的作品一律拒绝写操作。
 async function assertOwner(submissionId: string, userId: string) {
   const sub = await prisma.submission.findUnique({
     where: { id: submissionId },
   });
-  if (!sub || sub.authorId !== userId) {
+  if (!sub || sub.deletedAt || sub.authorId !== userId) {
     throw new Error("无权操作此作品");
   }
   return sub;
@@ -200,12 +200,11 @@ export async function deleteSubmission(formData: FormData) {
   const submissionId = String(formData.get("submissionId"));
   // 仅草稿可由作者删除——已进入评审的作品删除会抹掉评委评分等证据
   await assertDraftOwner(submissionId, user.id);
-  // 删除附件对象
-  const assets = await prisma.submissionAsset.findMany({
-    where: { submissionId },
+  // 软删除：置 deletedAt（界面隐藏、可恢复），保留附件对象与记录，不物理抹除。
+  await prisma.submission.update({
+    where: { id: submissionId },
+    data: { deletedAt: new Date() },
   });
-  await Promise.all(assets.map((a) => getStorage().delete(a.storageKey)));
-  await prisma.submission.delete({ where: { id: submissionId } });
   redirect("/dashboard");
 }
 
@@ -292,41 +291,118 @@ export async function removeBonus(formData: FormData) {
   revalidatePath(`/dashboard/submissions/${submissionId}`);
 }
 
-// ============ 附件（S3 协议 / 本地，≤ 200MB） ============
+// ============ 附件（预签名直传：浏览器直传 S3，不经服务器中转，≤ 200MB） ============
 
-export async function uploadAsset(
+// 单文件名长度上限（防滥用）。
+const MAX_FILENAME_LEN = 200;
+
+export type UploadTicket = {
+  assetId: string; // 已登记的 PENDING 附件 id（直传完成后用于 confirm）
+  uploadUrl: string; // 浏览器 PUT 直传地址（S3 预签名 / 本地上传端点）
+  headers: Record<string, string>; // 直传必须携带的请求头（含 Content-Type）
+  storageKey: string;
+};
+
+export type TicketState =
+  | { error?: string; ticket?: UploadTicket; ok?: boolean }
+  | undefined;
+
+// 第一段：申请上传票据。校验归属/大小/类型 → 登记 PENDING 附件 → 返回预签名直传 URL。
+// 文件本体由浏览器直传对象存储，绝不经过本服务器（核心：省带宽与内存）。
+export async function createUploadTicket(
+  _prev: TicketState,
+  formData: FormData,
+): Promise<TicketState> {
+  const user = await requireAuth();
+  const submissionId = String(formData.get("submissionId"));
+  await assertDraftOwner(submissionId, user.id);
+
+  const fileName = String(formData.get("fileName") ?? "").trim();
+  const sizeBytes = Number(formData.get("sizeBytes"));
+  const contentType =
+    String(formData.get("contentType") ?? "").trim() ||
+    "application/octet-stream";
+
+  if (!fileName) return { error: "缺少文件名" };
+  if (fileName.length > MAX_FILENAME_LEN) return { error: "文件名过长" };
+  if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) {
+    return { error: "请选择有效文件" };
+  }
+  if (sizeBytes > MAX_UPLOAD_BYTES) {
+    return { error: `文件超过 ${MAX_UPLOAD_MB}MB 上限` };
+  }
+  const type = (String(formData.get("type") || "OTHER") || "OTHER") as AssetType;
+
+  // 清理本作品下超 1 小时仍未确认的 PENDING 孤儿（用户中途放弃直传遗留）
+  await prisma.submissionAsset.deleteMany({
+    where: {
+      submissionId,
+      status: "PENDING",
+      createdAt: { lt: new Date(Date.now() - 60 * 60 * 1000) },
+    },
+  });
+
+  const dot = fileName.lastIndexOf(".");
+  const ext = dot >= 0 ? fileName.slice(dot) : "";
+  const key = `submissions/${submissionId}/${randomUUID()}${ext}`;
+
+  // 先登记 PENDING（占位，记录预期大小）；直传完成后由 confirmUpload 置 READY。
+  const asset = await prisma.submissionAsset.create({
+    data: {
+      submissionId,
+      type,
+      fileName,
+      storageKey: key,
+      mimeType: contentType,
+      sizeBytes,
+      status: "PENDING",
+    },
+  });
+
+  const { url, headers } = await getStorage().presignPut({
+    key,
+    contentType,
+  });
+
+  return {
+    ok: true,
+    ticket: { assetId: asset.id, uploadUrl: url, headers, storageKey: key },
+  };
+}
+
+// 第二段：确认上传完成。HEAD 校验对象确已存在（防伪造登记）→ 用真实大小回填并置 READY。
+export async function confirmUpload(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
   const user = await requireAuth();
   const submissionId = String(formData.get("submissionId"));
   await assertDraftOwner(submissionId, user.id);
+  const assetId = String(formData.get("assetId"));
 
-  const file = formData.get("file");
-  if (!(file instanceof File) || file.size === 0) {
-    return { error: "请选择文件" };
+  const asset = await prisma.submissionAsset.findUnique({
+    where: { id: assetId },
+  });
+  // 防 IDOR：附件必须确属于该作品
+  if (!asset || asset.submissionId !== submissionId) {
+    return { error: "附件不存在" };
   }
-  if (file.size > MAX_UPLOAD_BYTES) {
+
+  // HEAD 校验：对象真实存在才算上传成功，否则清掉占位记录
+  const meta = await getStorage().head(asset.storageKey);
+  if (!meta) {
+    await prisma.submissionAsset.delete({ where: { id: assetId } });
+    return { error: "上传未完成，请重试" };
+  }
+  if (meta.sizeBytes > MAX_UPLOAD_BYTES) {
+    await getStorage().delete(asset.storageKey);
+    await prisma.submissionAsset.delete({ where: { id: assetId } });
     return { error: `文件超过 ${MAX_UPLOAD_MB}MB 上限` };
   }
-  const type = (String(formData.get("type") || "OTHER") || "OTHER") as AssetType;
 
-  const buf = Buffer.from(await file.arrayBuffer());
-  const dot = file.name.lastIndexOf(".");
-  const ext = dot >= 0 ? file.name.slice(dot) : "";
-  const key = `submissions/${submissionId}/${randomUUID()}${ext}`;
-  const contentType = file.type || "application/octet-stream";
-
-  await getStorage().put({ key, body: buf, contentType });
-  await prisma.submissionAsset.create({
-    data: {
-      submissionId,
-      type,
-      fileName: file.name,
-      storageKey: key,
-      mimeType: contentType,
-      sizeBytes: file.size,
-    },
+  await prisma.submissionAsset.update({
+    where: { id: assetId },
+    data: { status: "READY", sizeBytes: meta.sizeBytes },
   });
   revalidatePath(`/dashboard/submissions/${submissionId}`);
   return { ok: true };

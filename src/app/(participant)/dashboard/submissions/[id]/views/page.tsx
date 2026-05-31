@@ -14,9 +14,9 @@ export default async function ViewsPage({
 
   const submission = await prisma.submission.findUnique({
     where: { id },
-    select: { authorId: true, title: true },
+    select: { authorId: true, title: true, deletedAt: true },
   });
-  if (!submission) notFound();
+  if (!submission || submission.deletedAt) notFound();
   if (submission.authorId !== user.id) redirect("/dashboard");
 
   // 按评委聚合审阅统计——用 groupBy 在 DB 层算「会话数 / 总时长 / 首次时间」，

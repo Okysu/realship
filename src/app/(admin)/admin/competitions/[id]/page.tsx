@@ -18,14 +18,11 @@ import {
   deleteSubmissionField,
   deleteBonusRule,
 } from "@/server/actions/admin";
-import {
-  publishResults,
-  unpublishResults,
-  promoteByRank,
-} from "@/server/actions/lifecycle";
+import { LifecycleActions } from "@/components/admin/lifecycle-actions";
 import { AddFieldForm } from "@/components/forms/AddFieldForm";
 import { AddBonusRuleForm } from "@/components/forms/AddBonusRuleForm";
 import { InlineEdit } from "@/components/admin/inline-edit";
+import { ConfirmSubmit } from "@/components/ui/confirm-submit";
 import {
   EditTrackForm,
   EditStageForm,
@@ -56,7 +53,7 @@ export default async function EditCompetitionPage({
       bonusRules: { orderBy: { sortOrder: "asc" } },
     },
   });
-  if (!competition) notFound();
+  if (!competition || competition.deletedAt) notFound();
 
   return (
     <div className="max-w-4xl space-y-8">
@@ -132,9 +129,13 @@ export default async function EditCompetitionPage({
                         name="competitionId"
                         value={competition.id}
                       />
-                      <button className="text-xs text-danger hover:underline">
+                      <ConfirmSubmit
+                        asLink
+                        title="删除赛道"
+                        message={`确定删除赛道「${track.name}」吗？该赛道下的评分维度与作品归属将一并移除，不可恢复。`}
+                      >
                         删除赛道
-                      </button>
+                      </ConfirmSubmit>
                     </form>
                   </div>
                 }
@@ -171,12 +172,13 @@ export default async function EditCompetitionPage({
                             name="competitionId"
                             value={competition.id}
                           />
-                          <button
-                            className="text-xs text-danger hover:underline"
-                            aria-label="删除维度"
+                          <ConfirmSubmit
+                            asLink
+                            title="删除评分维度"
+                            message={`确定删除维度「${c.name}」吗？已有评委对该维度的打分将一并失效。`}
                           >
                             删除
-                          </button>
+                          </ConfirmSubmit>
                         </form>
                       </span>
                     }
@@ -239,12 +241,13 @@ export default async function EditCompetitionPage({
                       name="competitionId"
                       value={competition.id}
                     />
-                    <button
-                      className="text-xs text-danger hover:underline"
-                      aria-label="删除字段"
+                    <ConfirmSubmit
+                      asLink
+                      title="删除提交字段"
+                      message={`确定删除字段「${f.label}」吗？已提交作品中该字段的内容将不再展示。`}
                     >
                       删除
-                    </button>
+                    </ConfirmSubmit>
                   </form>
                 </span>
               }
@@ -302,12 +305,13 @@ export default async function EditCompetitionPage({
                       name="competitionId"
                       value={competition.id}
                     />
-                    <button
-                      className="text-xs text-danger hover:underline"
-                      aria-label="删除加分项"
+                    <ConfirmSubmit
+                      asLink
+                      title="删除加分项"
+                      message={`确定删除加分项「${b.label}」吗？已声明该加分的作品将失去对应加分。`}
                     >
                       删除
-                    </button>
+                    </ConfirmSubmit>
                   </form>
                 </span>
               }
@@ -356,9 +360,13 @@ export default async function EditCompetitionPage({
                         name="competitionId"
                         value={competition.id}
                       />
-                      <button className="text-xs text-danger hover:underline">
+                      <ConfirmSubmit
+                        asLink
+                        title="删除阶段"
+                        message={`确定删除阶段「${s.name}」吗？该阶段下的作品将失去阶段归属。`}
+                      >
                         删除
-                      </button>
+                      </ConfirmSubmit>
                     </form>
                   </span>
                 }
@@ -384,86 +392,33 @@ export default async function EditCompetitionPage({
 
       <Section
         title="结果与晋级"
-        description="评审收尾：晋级把当前排名前 N 移入下一阶段；公布结果会定格名次并向公众揭晓分数/评语。"
+        description="评审收尾用的两个快捷操作（无需填表）：①「晋级」把当前排名前 N 名一键移入下一阶段，仅多阶段赛事需要；②「公布结果」把名次定格并向公众揭晓分数与评语——评审期内这些对公众隐藏。"
       >
-        {/* 晋级：前 N 名进入某阶段 */}
-        <div className="rounded-lg border border-border p-4">
-          <p className="text-sm font-medium text-foreground">晋级前 N 名</p>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            按当前综合得分，把前 N 名作品移入所选阶段（如「初赛前 20 进复赛」）。
-          </p>
-          <form
-            action={promoteByRank}
-            className="mt-3 flex flex-wrap items-center gap-2"
-          >
-            <input type="hidden" name="competitionId" value={competition.id} />
-            <input
-              type="number"
-              name="topN"
-              defaultValue={10}
-              min={1}
-              className="h-9 w-20 rounded-lg border border-input bg-card px-2 text-center text-sm text-foreground"
-              aria-label="前 N 名"
-            />
-            <span className="text-sm text-muted-foreground">名 →</span>
-            <select
-              name="stageId"
-              className="h-9 rounded-lg border border-input bg-card px-2 text-sm text-foreground"
-              aria-label="目标阶段"
-            >
-              {competition.stages.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {stageTypeLabels[s.type]} · {s.name}
-                </option>
-              ))}
-            </select>
-            <Button variant="secondary" className="h-9">
-              晋级
-            </Button>
-          </form>
-        </div>
-
-        {/* 公布结果 */}
-        <div className="mt-4 rounded-lg border border-border p-4">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-medium text-foreground">
-                {competition.resultsPublished ? "结果已公布" : "结果未公布"}
-              </p>
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                {competition.resultsPublished
-                  ? "公众可在展示墙/排行榜看到分数、名次与评委评语。"
-                  : "评审期内分数对公众隐藏；公布后定格名次并揭晓。"}
-              </p>
-            </div>
-            {competition.resultsPublished ? (
-              <form action={unpublishResults}>
-                <input
-                  type="hidden"
-                  name="competitionId"
-                  value={competition.id}
-                />
-                <Button variant="secondary">撤回公布</Button>
-              </form>
-            ) : (
-              <form action={publishResults}>
-                <input
-                  type="hidden"
-                  name="competitionId"
-                  value={competition.id}
-                />
-                <Button>公布结果</Button>
-              </form>
-            )}
-          </div>
-        </div>
+        <LifecycleActions
+          competitionId={competition.id}
+          resultsPublished={competition.resultsPublished}
+          stages={competition.stages.map((s) => ({
+            id: s.id,
+            name: s.name,
+            typeLabel: stageTypeLabels[s.type],
+          }))}
+        />
       </Section>
 
       <div className="rounded-2xl border border-danger/30 bg-danger/5 p-6">
         <h2 className="text-sm font-semibold text-danger">危险操作</h2>
+        <p className="mt-1 text-xs text-muted-foreground">
+          删除赛事会将其从所有列表隐藏（软删除，数据保留可恢复）。
+        </p>
         <form action={deleteCompetition} className="mt-3">
           <input type="hidden" name="id" value={competition.id} />
-          <Button variant="danger">删除赛事（连带赛道/阶段/作品）</Button>
+          <ConfirmSubmit
+            title="删除赛事"
+            message={`确定删除赛事「${competition.title}」吗？将从所有列表隐藏（数据保留，可恢复）。`}
+            confirmText="确认删除赛事"
+          >
+            删除赛事
+          </ConfirmSubmit>
         </form>
       </div>
     </div>

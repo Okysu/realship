@@ -28,6 +28,7 @@ export async function computeRanking(
 ): Promise<RankingResult> {
   const submissions = await prisma.submission.findMany({
     where: {
+      deletedAt: null,
       status: { in: ["SUBMITTED", "UNDER_REVIEW", "SCORED"] },
       track: { competitionId },
     },

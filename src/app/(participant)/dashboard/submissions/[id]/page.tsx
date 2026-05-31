@@ -2,6 +2,7 @@ import Link from "next/link";
 import { BackLink } from "@/components/ui/back-link";
 import { notFound, redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { parseSubmissionContent } from "@/lib/submission-content";
 import { requireAuth } from "@/lib/rbac";
 import { SubmissionForm } from "@/components/forms/SubmissionForm";
 import { AddLinkForm } from "@/components/forms/AddLinkForm";
@@ -9,6 +10,7 @@ import { UploadAssetForm } from "@/components/forms/UploadAssetForm";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Section } from "@/components/ui/section";
+import { ConfirmSubmit } from "@/components/ui/confirm-submit";
 import {
   submitSubmission,
   withdrawSubmission,
@@ -49,7 +51,7 @@ export default async function SubmissionWorkbenchPage({
         },
       },
       links: { orderBy: { createdAt: "asc" } },
-      assets: { orderBy: { createdAt: "asc" } },
+      assets: { where: { status: "READY" }, orderBy: { createdAt: "asc" } },
       bonuses: { include: { bonusRule: true } },
       team: {
         include: {
@@ -66,7 +68,7 @@ export default async function SubmissionWorkbenchPage({
       },
     },
   });
-  if (!submission) notFound();
+  if (!submission || submission.deletedAt) notFound();
   // 作者本人或团队队员可查看；非相关人退回
   const isLeader = submission.authorId === user.id;
   const isMember =
@@ -87,7 +89,7 @@ export default async function SubmissionWorkbenchPage({
     name: t.name,
     competitionTitle: competition.title,
   }));
-  const content = (submission.content ?? {}) as Record<string, string>;
+  const content = parseSubmissionContent(submission.content);
   const claimedByRule = new Map(
     submission.bonuses.map((b) => [b.bonusRuleId, b]),
   );
@@ -430,7 +432,13 @@ export default async function SubmissionWorkbenchPage({
         <div className="rounded-2xl border border-danger/30 bg-danger/5 p-6">
           <form action={deleteSubmission}>
             <input type="hidden" name="submissionId" value={submission.id} />
-            <Button variant="danger">删除作品</Button>
+            <ConfirmSubmit
+              title="删除作品"
+              message={`确定删除「${submission.title}」吗？删除后将从你的列表移除（数据保留可联系管理员恢复）。`}
+              confirmText="确认删除"
+            >
+              删除作品
+            </ConfirmSubmit>
           </form>
         </div>
       )}

@@ -42,6 +42,13 @@ export async function GET(
     }
   }
 
+  // S3 等对象存储：鉴权通过后直接 302 到预签名下载链接，文件由客户端从对象存储直取，
+  // 不经服务器中转（省下载带宽）。本地驱动返回 null，回退服务器读取。
+  const presignedUrl = await getStorage().presignGet(objectKey);
+  if (presignedUrl) {
+    return Response.redirect(presignedUrl, 302);
+  }
+
   const obj = await getStorage().get(objectKey);
   if (!obj) {
     return new Response("Not Found", { status: 404 });

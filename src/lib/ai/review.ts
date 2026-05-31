@@ -64,7 +64,7 @@ export async function runAiReview(submissionId: string) {
         },
       },
       links: true,
-      assets: true,
+      assets: { where: { status: "READY" } },
     },
   });
   // 草稿作品不应送外部 AI（避免对未提交内容外发与产生成本）

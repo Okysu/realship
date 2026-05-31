@@ -22,6 +22,7 @@ export default async function AssignmentsPage({
 
   // 赛事维度：多赛事时按赛事筛选作品
   const competitions = await prisma.competition.findMany({
+    where: { deletedAt: null },
     orderBy: { createdAt: "desc" },
     select: { id: true, title: true },
   });
@@ -31,6 +32,7 @@ export default async function AssignmentsPage({
       : undefined;
 
   const where: Prisma.SubmissionWhereInput = {
+    deletedAt: null,
     status: { in: ["SUBMITTED", "UNDER_REVIEW", "SCORED"] },
     ...(selectedComp ? { track: { competitionId: selectedComp } } : {}),
   };

@@ -1,6 +1,7 @@
 import { BackLink } from "@/components/ui/back-link";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { parseSubmissionContent } from "@/lib/submission-content";
 import { requireRole } from "@/lib/rbac";
 import { ReviewTracker } from "@/components/review/ReviewTracker";
 import { MaterialLink } from "@/components/review/MaterialLink";
@@ -58,7 +59,7 @@ export default async function JudgeReviewPage({
         },
       },
       links: { orderBy: { createdAt: "asc" } },
-      assets: { orderBy: { createdAt: "asc" } },
+      assets: { where: { status: "READY" }, orderBy: { createdAt: "asc" } },
       bonuses: { include: { bonusRule: true } },
       judgeScores: { where: { judgeId: judge.id } },
       judgeNotes: { where: { judgeId: judge.id } },
@@ -77,7 +78,7 @@ export default async function JudgeReviewPage({
       },
     },
   });
-  if (!submission) redirect("/judge");
+  if (!submission || submission.deletedAt) redirect("/judge");
 
   const myScores = new Map(
     submission.judgeScores.map((s) => [
@@ -87,7 +88,7 @@ export default async function JudgeReviewPage({
   );
   const myNote = submission.judgeNotes[0]?.note;
   const hasCrossEvidence = submission.bonuses.length > 0;
-  const content = (submission.content ?? {}) as Record<string, string>;
+  const content = parseSubmissionContent(submission.content);
   const fields = submission.track.competition.fields;
   const aiEnabled = isAiEnabled();
   const runs = submission.aiRuns; // 多 agent：每个 agent 一条 run

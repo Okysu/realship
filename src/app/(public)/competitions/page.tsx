@@ -15,9 +15,11 @@ export default async function CompetitionsListPage({
   const { page: pageParam } = await searchParams;
   const page = Math.max(1, Number(pageParam) || 1);
 
-  const total = await prisma.competition.count({ where: { isPublished: true } });
+  const total = await prisma.competition.count({
+    where: { isPublished: true, deletedAt: null },
+  });
   const competitions = await prisma.competition.findMany({
-    where: { isPublished: true },
+    where: { isPublished: true, deletedAt: null },
     orderBy: { startAt: "desc" },
     skip: (page - 1) * PER_PAGE,
     take: PER_PAGE,

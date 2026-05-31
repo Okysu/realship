@@ -59,6 +59,31 @@ cp .env.example .env
 
 > ⚠️ **安全**：`.env` 已被 `.gitignore` 与 `.dockerignore` 双重忽略，绝不会进入仓库或镜像。务必使用全新随机的 `AUTH_SECRET` 与独立的数据库 / 密钥凭据。
 
+### 3.1 对象存储 CORS（启用 S3 直传必读）
+
+平台附件采用 **S3 预签名 URL 直传**：浏览器拿到预签名 URL 后**直接 PUT 到对象存储**，文件不经过应用服务器（省带宽与内存）。因此对象存储桶**必须配置 CORS**，允许来自站点域名的 `PUT` 与 `GET`，否则浏览器会拦截直传请求。
+
+以 Cloudflare R2 / AWS S3 为例，给桶添加如下 CORS 规则（把 `AllowedOrigins` 换成你的实际域名）：
+
+```json
+[
+  {
+    "AllowedOrigins": ["https://real.example.com"],
+    "AllowedMethods": ["PUT", "GET"],
+    "AllowedHeaders": ["content-type"],
+    "ExposeHeaders": ["ETag"],
+    "MaxAgeSeconds": 3000
+  }
+]
+```
+
+- **AWS S3**：控制台 → 存储桶 → 权限 → 跨源资源共享(CORS) 粘贴上述 JSON。
+- **Cloudflare R2**：控制台 → R2 → 存储桶 → Settings → CORS Policy。
+- **MinIO**：`mc admin config` 或在反向代理层放行（MinIO 默认较宽松）。
+- 本地开发用 `STORAGE_DRIVER=local`（默认）时**无需 CORS**——直传走应用自有的 `/api/upload` 端点。
+
+> 下载同理走预签名 GET：鉴权通过后服务器 302 重定向到对象存储直链，文件由客户端直取。`AllowedMethods` 含 `GET` 即可。
+
 ---
 
 ## 4. 路径一：Docker + 外部数据库（推荐）

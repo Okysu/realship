@@ -8,6 +8,7 @@ import { BackLink } from "@/components/ui/back-link";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ConfirmSubmit } from "@/components/ui/confirm-submit";
 import { Input } from "@/components/ui/input";
 import { submissionStatusLabels } from "@/lib/labels";
 
@@ -32,7 +33,7 @@ export default async function AdminSubmissionReviewPage({
       judgeNotes: true,
     },
   });
-  if (!submission) notFound();
+  if (!submission || submission.deletedAt) notFound();
 
   return (
     <div className="max-w-4xl space-y-6">
@@ -122,9 +123,14 @@ export default async function AdminSubmissionReviewPage({
                         value={submission.id}
                       />
                       <input type="hidden" name="judgeId" value={judge.id} />
-                      <Button variant="danger" className="h-9 shrink-0 px-3">
+                      <ConfirmSubmit
+                        title="撤销该评委的评审"
+                        message={`确定撤销 ${judge.name ?? judge.email} 对本作品的评审吗？将清除其全部评分、备注与 AI 作答，此操作不可恢复（会记入审计）。`}
+                        confirmText="确认撤销"
+                        className="h-9 shrink-0 px-3"
+                      >
                         <RotateCcw size={14} className="mr-1" /> 撤销评审
-                      </Button>
+                      </ConfirmSubmit>
                     </form>
                   ) : (
                     <Badge tone="warning">未评审</Badge>

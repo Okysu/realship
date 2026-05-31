@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { CheckCircle2, Sparkles, Users } from "lucide-react";
 import { prisma } from "@/lib/prisma";
+import { parseSubmissionContent } from "@/lib/submission-content";
 import { externalLinkTypeLabels } from "@/lib/labels";
 import { formatDuration } from "@/lib/utils";
 import { Card } from "@/components/ui/card";
@@ -17,8 +18,9 @@ export default async function ShowcaseDetailPage({
   const submission = await prisma.submission.findFirst({
     where: {
       id: submissionId,
+      deletedAt: null,
       status: { not: "DRAFT" },
-      track: { competition: { isPublished: true } },
+      track: { competition: { isPublished: true, deletedAt: null } },
     },
     include: {
       track: {
@@ -69,7 +71,7 @@ export default async function ShowcaseDetailPage({
     0,
   );
 
-  const content = (submission.content ?? {}) as Record<string, string>;
+  const content = parseSubmissionContent(submission.content);
   const fields = submission.track.competition.fields;
   // 结果门禁：评审期内对公众隐藏分数/名次/评委明细，防过早泄分与评委互看；公布后揭晓
   const showResults = submission.track.competition.resultsPublished;

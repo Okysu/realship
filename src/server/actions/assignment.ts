@@ -25,6 +25,7 @@ export async function autoAssignJudges(formData: FormData) {
 
   const submissions = await prisma.submission.findMany({
     where: {
+      deletedAt: null,
       status: { in: ["SUBMITTED", "UNDER_REVIEW", "SCORED"] },
       ...(competitionId ? { track: { competitionId } } : {}),
     },

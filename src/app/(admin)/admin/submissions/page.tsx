@@ -55,6 +55,7 @@ export default async function AdminSubmissionsPage({
 
   // 赛事维度：作品按赛事归类，可筛选
   const competitions = await prisma.competition.findMany({
+    where: { deletedAt: null },
     orderBy: { createdAt: "desc" },
     select: { id: true, title: true },
   });
@@ -64,6 +65,7 @@ export default async function AdminSubmissionsPage({
       : undefined;
 
   const where: Prisma.SubmissionWhereInput = {
+    deletedAt: null,
     ...(validStatus ? { status: validStatus } : {}),
     ...(selectedComp ? { track: { competitionId: selectedComp } } : {}),
     ...(q ? { title: { contains: q, mode: "insensitive" } } : {}),

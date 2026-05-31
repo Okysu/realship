@@ -18,7 +18,7 @@ export default async function RankingPage({
 
   // 排行榜按赛事分——每个赛事独立排名（维度/权重不同，不可跨赛事混排）
   const comps = await prisma.competition.findMany({
-    where: { isPublished: true },
+    where: { isPublished: true, deletedAt: null },
     orderBy: { createdAt: "desc" },
     select: { id: true, title: true, resultsPublished: true },
   });

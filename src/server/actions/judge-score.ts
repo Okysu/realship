@@ -93,7 +93,7 @@ export async function finalizeReview(formData: FormData) {
       author: { select: { email: true } },
     },
   });
-  if (!submission) return;
+  if (!submission || submission.deletedAt) return;
 
   // 校验所有维度均已打分，否则不允许定稿
   const scored = await prisma.judgeScore.count({

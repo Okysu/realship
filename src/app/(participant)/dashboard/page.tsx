@@ -33,6 +33,7 @@ export default async function DashboardPage({
   // 作者本人 + 团队队员都能看到参与的作品（队员此前完全看不到，是团队功能硬伤）
   const submissions = await prisma.submission.findMany({
     where: {
+      deletedAt: null,
       OR: [
         { authorId: user.id },
         { team: { members: { some: { userId: user.id } } } },

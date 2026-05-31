@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
-import Link from "next/link";
+
 import { loginUser } from "@/server/actions/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,12 +34,7 @@ export function LoginForm() {
       <Button type="submit" disabled={pending} className="w-full">
         {pending ? "登录中…" : "登录"}
       </Button>
-      <p className="text-center text-sm text-muted-foreground">
-        还没有账号？
-        <Link href="/register" className="text-primary hover:underline">
-          注册
-        </Link>
-      </p>
+
     </form>
   );
 }

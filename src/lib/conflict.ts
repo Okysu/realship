@@ -7,6 +7,7 @@ export async function getConflictSubmissionIds(
 ): Promise<Set<string>> {
   const subs = await prisma.submission.findMany({
     where: {
+      deletedAt: null,
       OR: [
         { authorId: judgeId },
         { team: { members: { some: { userId: judgeId } } } },

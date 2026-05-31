@@ -18,8 +18,9 @@ export default async function AdminHomePage({
   const { page: pageParam } = await searchParams;
   const page = Math.max(1, Number(pageParam) || 1);
 
-  const total = await prisma.competition.count();
+  const total = await prisma.competition.count({ where: { deletedAt: null } });
   const competitions = await prisma.competition.findMany({
+    where: { deletedAt: null },
     orderBy: { createdAt: "desc" },
     skip: (page - 1) * PER_PAGE,
     take: PER_PAGE,

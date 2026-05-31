@@ -20,11 +20,17 @@ import {
 } from "@/lib/email";
 
 export type AuthFormState =
-  | { errors?: Record<string, string[] | undefined>; message?: string }
+  | {
+      errors?: Record<string, string[] | undefined>;
+      message?: string;
+      ok?: boolean;
+      cooldownSec?: number; // 验证码重发剩余冷却秒数（前端据此倒计时）
+    }
   | undefined;
 
 const CODE_TTL_MIN = 10;
 const RESET_TTL_MIN = 30;
+const CODE_RESEND_COOLDOWN_SEC = 60; // 验证码重发冷却（防刷接口）
 
 // 登出并回到首页（供统一导航复用）。
 export async function signOutAction() {
@@ -47,8 +53,24 @@ export async function sendVerificationCode(
     return { message: "该邮箱已被注册" };
   }
 
-  const code = String(randomInt(100000, 1000000));
   const identifier = `verify:${email}`;
+  // 后端限流：若上一次验证码仍在冷却期内，拒绝重发（防绕过前端直刷接口）。
+  // expires = 发送时刻 + CODE_TTL_MIN，故「已过去时间 = TTL - 剩余有效」。
+  const existing = await prisma.verificationToken.findFirst({
+    where: { identifier },
+  });
+  if (existing) {
+    const elapsedSec =
+      CODE_TTL_MIN * 60 - (existing.expires.getTime() - Date.now()) / 1000;
+    if (elapsedSec < CODE_RESEND_COOLDOWN_SEC) {
+      return {
+        message: "请稍后再试",
+        cooldownSec: Math.ceil(CODE_RESEND_COOLDOWN_SEC - elapsedSec),
+      };
+    }
+  }
+
+  const code = String(randomInt(100000, 1000000));
   await prisma.verificationToken.deleteMany({ where: { identifier } });
   await prisma.verificationToken.create({
     data: {
@@ -69,7 +91,11 @@ export async function sendVerificationCode(
   } catch {
     return { message: "验证码发送失败，请稍后重试" };
   }
-  return { message: "验证码已发送，请查收邮箱" };
+  return {
+    ok: true,
+    message: "验证码已发送，请查收邮箱",
+    cooldownSec: CODE_RESEND_COOLDOWN_SEC,
+  };
 }
 
 // 注册新参赛者；启用 SMTP 时强制校验邮箱验证码。成功后直接登录并跳转。

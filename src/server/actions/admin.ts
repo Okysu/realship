@@ -124,14 +124,18 @@ export async function deleteCompetition(formData: FormData) {
     where: { id },
     select: { title: true },
   });
-  await prisma.competition.delete({ where: { id } });
+  // 软删除：置 deletedAt（界面隐藏、数据保留，可人工恢复），不物理抹除赛道/作品/评分。
+  await prisma.competition.update({
+    where: { id },
+    data: { deletedAt: new Date() },
+  });
   await audit({
     actorId: admin.id,
     actorEmail: admin.email ?? null,
     action: "competition.delete",
     targetType: "Competition",
     targetId: id,
-    detail: { title: comp?.title },
+    detail: { title: comp?.title, soft: true },
   });
   redirect("/admin");
 }

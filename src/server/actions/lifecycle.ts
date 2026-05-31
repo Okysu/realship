@@ -6,9 +6,15 @@ import { requireRole } from "@/lib/rbac";
 import { audit } from "@/lib/audit";
 import { computeRanking } from "@/lib/scoring/ranking";
 
+// 生命周期操作统一返回态：成功消息供前端提示（解决「点了没反应」）。
+export type LifecycleState = { ok?: boolean; message?: string } | undefined;
+
 // 公布结果：快照当前排名→落库 finalRank（名次定格、不再随实时计算漂移），
 // 已评作品置 SCORED，赛事 resultsPublished=true（公开页据此揭晓分数/名次/评语）。
-export async function publishResults(formData: FormData) {
+export async function publishResults(
+  _prev: LifecycleState,
+  formData: FormData,
+): Promise<LifecycleState> {
   const admin = await requireRole("ADMIN");
   const competitionId = String(formData.get("competitionId"));
 
@@ -44,10 +50,17 @@ export async function publishResults(formData: FormData) {
   });
   revalidatePath(`/admin/competitions/${competitionId}`);
   revalidatePath("/ranking");
+  return {
+    ok: true,
+    message: `已公布结果：定格 ${items.length} 件作品名次，公众现可查看分数与评语。`,
+  };
 }
 
 // 撤回公布（如需修正后重新公布）。
-export async function unpublishResults(formData: FormData) {
+export async function unpublishResults(
+  _prev: LifecycleState,
+  formData: FormData,
+): Promise<LifecycleState> {
   const admin = await requireRole("ADMIN");
   const competitionId = String(formData.get("competitionId"));
   await prisma.competition.update({
@@ -63,6 +76,7 @@ export async function unpublishResults(formData: FormData) {
   });
   revalidatePath(`/admin/competitions/${competitionId}`);
   revalidatePath("/ranking");
+  return { ok: true, message: "已撤回公布：分数与名次重新对公众隐藏。" };
 }
 
 // 人工指定 / 清除获奖标记（如「一等奖」「最佳人气」；专家组可干预）。
@@ -86,7 +100,10 @@ export async function setAward(formData: FormData) {
 }
 
 // 晋级：把当前排名前 N 的作品移到目标阶段（如初赛前 20 进复赛）。
-export async function promoteByRank(formData: FormData) {
+export async function promoteByRank(
+  _prev: LifecycleState,
+  formData: FormData,
+): Promise<LifecycleState> {
   const admin = await requireRole("ADMIN");
   const competitionId = String(formData.get("competitionId"));
   const stageId = String(formData.get("stageId"));
@@ -97,7 +114,7 @@ export async function promoteByRank(formData: FormData) {
     where: { id: stageId, competitionId },
     select: { id: true, name: true },
   });
-  if (!stage) return;
+  if (!stage) return { message: "目标阶段不存在" };
 
   const { items } = await computeRanking(competitionId, topN);
   const ids = items.map((i) => i.id);
@@ -117,4 +134,11 @@ export async function promoteByRank(formData: FormData) {
   });
   revalidatePath(`/admin/competitions/${competitionId}`);
   revalidatePath("/admin/submissions");
+  return {
+    ok: true,
+    message:
+      ids.length > 0
+        ? `已将排名前 ${ids.length} 的作品晋级到「${stage.name}」。`
+        : `没有可晋级的作品（该赛事暂无进入排名的作品）。`,
+  };
 }

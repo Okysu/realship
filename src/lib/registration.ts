@@ -21,7 +21,7 @@ export async function isRegistrationOpen(
 // 列出当前【已发布且开放报名】的赛事（用于「提交作品先选赛事」）。
 export async function getOpenCompetitions() {
   const comps = await prisma.competition.findMany({
-    where: { isPublished: true },
+    where: { isPublished: true, deletedAt: null },
     orderBy: { createdAt: "desc" },
     include: {
       stages: { where: { type: "REGISTRATION" } },

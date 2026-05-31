@@ -24,7 +24,7 @@ export default async function CompetitionDetailPage({
 }) {
   const { slug } = await params;
   const competition = await prisma.competition.findFirst({
-    where: { slug, isPublished: true },
+    where: { slug, isPublished: true, deletedAt: null },
     include: {
       stages: { orderBy: { sortOrder: "asc" } },
       tracks: {

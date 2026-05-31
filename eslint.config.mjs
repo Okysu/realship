@@ -5,6 +5,12 @@ import nextTs from "eslint-config-next/typescript";
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
+  {
+    // 锁死显式 any：杜绝以后引入 any（强类型项目；Json 字段统一用类型化 helper 解析）。
+    rules: {
+      "@typescript-eslint/no-explicit-any": "error",
+    },
+  },
   // Override default ignores of eslint-config-next.
   globalIgnores([
     // Default ignores of eslint-config-next:

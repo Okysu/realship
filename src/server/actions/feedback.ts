@@ -22,9 +22,11 @@ export async function openFeedbackThread(
 
   const sub = await prisma.submission.findUnique({
     where: { id: submissionId },
-    select: { authorId: true },
+    select: { authorId: true, deletedAt: true },
   });
-  if (!sub || sub.authorId !== user.id) return { error: "无权操作此作品" };
+  if (!sub || sub.deletedAt || sub.authorId !== user.id) {
+    return { error: "无权操作此作品" };
+  }
 
   // 评委必须确实评审过此作品（有分配），否则不允许针对其开工单
   const assigned = await prisma.judgeAssignment.findUnique({

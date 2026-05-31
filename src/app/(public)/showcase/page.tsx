@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import { prisma } from "@/lib/prisma";
+import { parseSubmissionContent } from "@/lib/submission-content";
 import { PageHeader } from "@/components/ui/page-header";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ShowcaseFilters } from "@/components/showcase/showcase-filters";
@@ -14,7 +15,7 @@ export default async function ShowcasePage({
 
   // 赛事维度：作品展示墙按赛事筛选；切赛事时赛道范围随之收窄
   const competitions = await prisma.competition.findMany({
-    where: { isPublished: true },
+    where: { isPublished: true, deletedAt: null },
     orderBy: { createdAt: "desc" },
     select: { id: true, title: true },
   });
@@ -36,6 +37,7 @@ export default async function ShowcasePage({
 
   const submissions = await prisma.submission.findMany({
     where: {
+      deletedAt: null,
       status: { in: ["SUBMITTED", "UNDER_REVIEW", "SCORED"] },
       track: {
         competition: {
@@ -56,7 +58,7 @@ export default async function ShowcasePage({
   });
 
   const items = submissions.map((s) => {
-    const content = (s.content ?? {}) as Record<string, string>;
+    const content = parseSubmissionContent(s.content);
     const preview = Object.values(content).find((v) => v && v.trim()) ?? "";
     return {
       id: s.id,
