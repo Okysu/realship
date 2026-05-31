@@ -49,11 +49,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# README宣传图（不提交，放在.github/assets本地使用）
-.github/assets/*.jpeg
-.github/assets/*.jpg
-.github/assets/*.png
-.github/assets/*.gif
 
 # 本地工具 / 工作流目录（勿入库）
 .claude/
